@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>1.0.0-beta001</Version>
+    <Version>1.0.0-beta001-HLF.0.1</Version>
     <Company>Limbo</Company>
     <Authors>Anders Bjerner</Authors>
     <Copyright>Copyright © 2022</Copyright>
@@ -40,6 +40,10 @@
   <!-- Generate XML documentation -->
   <PropertyGroup>
     <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
   </PropertyGroup>
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="XCOPY /y &quot;$(ProjectDir)$(OutDir)$(TargetName).*&quot; &quot;C:\Users\Heather\NAS Folders\Active Projects\Webs\Clients\WOOD\TommyGate-sourcecode\src\UmbracoProject\wwwroot\bin\&quot;&#xD;&#xA;XCOPY /y &quot;$(ProjectDir)$(OutDir)$(TargetName).*&quot; &quot;C:\Users\Heather\NAS Folders\Active Projects\Webs\Clients\WOOD\TommyGate-sourcecode\src\UmbracoProject\bin\Debug\net5.0\&quot;&#xD;&#xA;&#xD;&#xA;" />
+  </Target>
 
 </Project>
