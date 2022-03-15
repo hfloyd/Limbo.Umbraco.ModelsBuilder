@@ -1,4 +1,6 @@
-﻿using Limbo.Umbraco.ModelsBuilder.Extensions;
+﻿using Limbo.Umbraco.ModelsBuilder.BackOffice.Assets;
+using Limbo.Umbraco.ModelsBuilder.Components;
+using Limbo.Umbraco.ModelsBuilder.Extensions;
 using Limbo.Umbraco.ModelsBuilder.Services;
 using Limbo.Umbraco.ModelsBuilder.Settings;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +21,12 @@ namespace Limbo.Umbraco.ModelsBuilder.Composers {
                 .AddSingleton<ModelsSourceGenerator>();
 
             builder.AddUmbracoOptions<LimboModelsBuilderSettings>();
+
+            builder.Components().Append<ModelsBuilderComponent>();
+            
+            builder.BackOfficeAssets()
+                .Append<ModelsBuilderCssAsset>()
+                .Append<ModelsBuilderDashboardAsset>();
 
         }
 

@@ -2,8 +2,12 @@
 using Limbo.Umbraco.ModelsBuilder.CodeAnalasis;
 using Limbo.Umbraco.ModelsBuilder.Extensions;
 using Limbo.Umbraco.ModelsBuilder.Models;
+using Limbo.Umbraco.ModelsBuilder.Models.Generator;
 using Limbo.Umbraco.ModelsBuilder.Settings;
+using Microsoft.Extensions.Options;
 using Skybrud.Essentials.Reflection;
+using Skybrud.Essentials.Time;
+using Skybrud.Essentials.Time.Iso8601;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,8 +15,10 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using Umbraco.Cms.Core.Hosting;
 using Umbraco.Cms.Core.Models.PublishedContent;
 using Umbraco.Cms.Infrastructure.ModelsBuilder;
+using Umbraco.Extensions;
 
 #pragma warning disable 1591
 
@@ -26,6 +32,8 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
     /// </summary>
     public class ModelsSourceGenerator {
         
+        private readonly LimboModelsBuilderSettings _modelsBuilderSettings;
+        private readonly IHostingEnvironment _hostingEnvironment;
         private readonly OutOfDateModelsStatus _outOfDateModels;
 
         /// <summary>
@@ -44,7 +52,10 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
 
         #region Constructors
 
-        public ModelsSourceGenerator(OutOfDateModelsStatus outOfDateModels) {
+        public ModelsSourceGenerator(IHostingEnvironment hostingEnvironment,
+            IOptions<LimboModelsBuilderSettings> modelsBuilderSettings, OutOfDateModelsStatus outOfDateModels) {
+            _modelsBuilderSettings = modelsBuilderSettings.Value;
+            _hostingEnvironment = hostingEnvironment;
             _outOfDateModels = outOfDateModels;
         }
 
@@ -74,6 +85,9 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
                 File.WriteAllText(model.Path, source, Encoding.UTF8);
 
             }
+
+            // Update the file on disk
+            SaveLastBuildDate();
 
             // Clear the file on disk
             _outOfDateModels.Clear();
@@ -284,9 +298,53 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
 
             WriteClassEnd(writer, model, settings);
 
+            WriteExtensionMethodsClass(writer, model, ignoredPropertyTypes, partialClass, models, settings);
+
             WriteNamespaceEnd(writer, model, settings);
 
             return sb.ToString().Trim();
+
+        }
+
+        private void WriteExtensionMethodsClass(TextWriter writer, TypeModel model, HashSet<string> ignoredPropertyTypes, ClassSummary partialClass, TypeModelList models, ModelsGeneratorSettings settings) {
+
+            List<GeneratorExtensionMethod> extensionMethods = new();
+                
+            // Determine the class name
+            string className = $"{(model.IsComposition ? "I" : string.Empty)}{model.ClrName}";
+
+            // Iterate through the properties
+            foreach (PropertyModel property in model.Properties) {
+                
+                // Skip the property if it already has been flagged as ignored
+                if (property.IsIgnored || ignoredPropertyTypes.Contains(property.Alias)) continue;
+            
+                // If the model has a custom partial class, and the property has been manually added there, we shouldn't add it here
+                if (partialClass != null && partialClass.HasProperty(property.ClrName)) continue;
+
+                // Get the name of the property's value type
+                string valueTypeName = GetValueTypeName(model, property.ValueType, models);
+
+                // Append the property model to the list
+                extensionMethods.Add(new GeneratorExtensionMethod(property, className, valueTypeName));
+
+            }
+
+            // Dont add the clas if there are no extension methods to write
+            if (extensionMethods.Count == 0) return;
+
+            // Write the start of the class
+            writer.WriteLine($"    public static class {model.ClrName}Extensions {{");
+            writer.WriteLine();
+
+            // Write the extension methods
+            foreach (GeneratorExtensionMethod extensionMethod in extensionMethods) {
+                extensionMethod.WriteTo(writer);
+            }
+            
+            // Write the end of the class
+            writer.WriteLine("    }");
+            writer.WriteLine();
 
         }
 
@@ -419,7 +477,7 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
         /// <param name="inherits">A list of inherits (base type and interfaces).</param>
         protected virtual void WriteClassStart(TextWriter writer, TypeModel model, List<string> inherits, ClassSummary partialClass, ModelsGeneratorSettings settings) {
 
-            //writer.WriteLine($"    [PublishedModel(\"{model.Alias}\")]");
+            writer.WriteLine($"    [PublishedModel(\"{model.Alias}\")]");
             writer.WriteLine($"    public partial class {model.ClrName}{(inherits.Any() ? " : " + string.Join(", ", inherits) : "")} {{");
             writer.WriteLine();
 
@@ -494,11 +552,31 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
         protected virtual void WriteProperties(TextWriter writer, TypeModel model, HashSet<string> ignoredPropertyTypes, ClassSummary partialClass, TypeModelList models, ModelsGeneratorSettings settings) {
 
             string indent = "".PadLeft(2 * settings.EditorConfig.IndentSize, ' ');
+            
+            // This is an extra, seemingly unnecessary step, but in order to prevent the region from being generated if
+            // there are no properties to write, we need create a list of the properties to write, and then check
+            // whether that list has any items
+            List<PropertyModel> properties = new();
+            foreach (PropertyModel property in model.Properties) {
+                
+                // Skip the property if it already has been flagged as ignored
+                if (property.IsIgnored || ignoredPropertyTypes.Contains(property.Alias)) continue;
+            
+                // If the model has a custom partial class, and the property has been manually added there, we shouldn't add it here
+                if (partialClass != null && partialClass.HasProperty(property.ClrName)) continue;
 
+                // Append the property model to the list
+                properties.Add(property);
+
+            }
+
+            // Return if there are no properties to write
+            if (properties.Count == 0) return;
+            
             writer.WriteLine($"{indent}#region Properties");
             writer.WriteLine();
 
-            foreach (PropertyModel property in model.Properties) {
+            foreach (PropertyModel property in properties) {
 
                 WriteProperty(writer, model, property, ignoredPropertyTypes, partialClass, models, settings);
 
@@ -521,12 +599,6 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
         /// <param name="ignoredPropertyTypes">A hash set with the ignored property types.</param>
         protected virtual void WriteProperty(TextWriter writer, TypeModel model, PropertyModel property, HashSet<string> ignoredPropertyTypes, ClassSummary partialClass, TypeModelList models, ModelsGeneratorSettings settings) {
 
-            // Skip the property if it already has been flagged as ignored
-            if (property.IsIgnored || ignoredPropertyTypes.Contains(property.Alias)) return;
-            
-            // If the model has a custom partial class, and the property has been manually added there, we shouldn't add it here
-            if (partialClass != null && partialClass.HasProperty(property.ClrName)) return;
-
             // Gets the name of the value type
             string valueTypeName = GetValueTypeName(model, property.ValueType, models);
             
@@ -543,7 +615,7 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
                     break;
                 
                 case PropertyStaticMethod.Auto:
-                    useStaticMethod = declaringType != model;
+                    useStaticMethod = declaringType != model || model.IsComposition;
                     break;
 
                 case PropertyStaticMethod.Never:
@@ -556,12 +628,14 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
             WriteJsonNetPropertySettings(writer, model, property, settings);
             
             writer.WriteLine("        [ImplementPropertyType(\"" + property.Alias + "\")]");
-            writer.Write("        public " + valueTypeName + " " + property.ClrName + " => ");
+            writer.Write("        public new " + valueTypeName + " " + property.ClrName + " => ");
 
             if (useStaticMethod) {
 
                 // If "model" and "declaringType" differ, we need to specify the class name
                 string className = declaringType == model ? null : $"{declaringType.ClrName}.";
+
+                // TODO: Should "className" also include the namespace?
 
                 writer.Write($"{className}Get" + property.ClrName + "(this);");
 
@@ -650,6 +724,25 @@ namespace Limbo.Umbraco.ModelsBuilder.Services {
 
             writer.Write(indent);
             writer.WriteLine("[Newtonsoft.Json.JsonProperty(" + string.Join(", ", hej) + ")]");
+
+        }
+
+        public virtual void SaveLastBuildDate() {
+            string modelsDirectory = _modelsBuilderSettings.ModelsDirectoryAbsolute(_hostingEnvironment);
+            if (!Directory.Exists(modelsDirectory)) Directory.CreateDirectory(modelsDirectory);
+            File.WriteAllText(Path.Combine(modelsDirectory, "lastBuild.flag"), EssentialsTime.UtcNow.ToString(Iso8601Constants.DateTimeMilliseconds) + Environment.NewLine);
+        }
+
+        public virtual EssentialsTime GetLastBuildDate() {
+            
+            string modelsDirectory = _modelsBuilderSettings.ModelsDirectoryAbsolute(_hostingEnvironment);
+
+            string path = Path.Combine(modelsDirectory, "lastBuild.flag");
+            if (!File.Exists(path)) return null;
+
+            string first = File.ReadAllLines(path).FirstOrDefault();
+
+            return EssentialsTime.TryParseIso8601(first, out EssentialsTime time) ? time : null;
 
         }
 
