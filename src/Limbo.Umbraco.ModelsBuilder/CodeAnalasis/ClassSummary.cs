@@ -51,6 +51,16 @@ namespace Limbo.Umbraco.ModelsBuilder.CodeAnalasis {
                 return Constructors.Any(x => x.Parameters.Length == 2 && x.Parameters[0].Type == "IPublishedContent" && x.Parameters[1].Type == "IPublishedValueFallback");
             }
         }
+        
+        /// <summary>
+        /// Gets a list of the properties of the class.
+        /// </summary>
+        public PropertySummary[] Properties { get; }
+        
+        /// <summary>
+        /// Gets a list of the methods of the class.
+        /// </summary>
+        public MethodSummary[] Methods { get; }
 
         #endregion
 
@@ -66,6 +76,36 @@ namespace Limbo.Umbraco.ModelsBuilder.CodeAnalasis {
                 .OfType<ConstructorDeclarationSyntax>()
                 .Select(x => new ConstructorSummary(x))
                 .ToArray();
+            Properties = syntax.Members
+                .OfType<PropertyDeclarationSyntax>()
+                .Select(x => new PropertySummary(x))
+                .ToArray();
+            Methods = syntax.Members
+                .OfType<MethodDeclarationSyntax>()
+                .Select(x => new MethodSummary(x))
+                .ToArray();
+        }
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// Returns whether the class has a property with the specified <paramref name="name"/>.
+        /// </summary>
+        /// <param name="name">The CLR name of the property.</param>
+        /// <returns><c>true</c> if the property exist; otherwise, <c>false</c>.</returns>
+        public bool HasProperty(string name) {
+            return Properties.Any(x => x.Name == name);
+        }
+
+        /// <summary>
+        /// Returns whether the class has a method with the specified <paramref name="name"/>.
+        /// </summary>
+        /// <param name="name">The CLR name of the method.</param>
+        /// <returns><c>true</c> if the method exist; otherwise, <c>false</c>.</returns>
+        public bool HasMethod(string name) {
+            return Methods.Any(x => x.Name == name);
         }
 
         #endregion
